@@ -1,0 +1,40 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+cbt-grpc-go-client
+# Build directories
+/bin/
+/build/
+/dist/
+
+# Output of `go run`
+*.run
+
+# Dependency directories (if vendored)
+vendor/
+
+# Go workspace file (optional)
+go.work
+go.work.sum
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test cache
+*.coverprofile
+*.testresults

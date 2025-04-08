@@ -1,0 +1,213 @@
+/*
+ * Generated file com/nutanix/common/v1/config/config.proto.
+ *
+ * Product version: 16.9.0-SNAPSHOT
+ *
+ * Part of the Nutanix Data Proetction gRPC APIs
+ *
+ * (c) 2024 Nutanix Inc.  All rights reserved
+ *
+ */
+
+syntax = "proto3";
+
+package com.nutanix.common.v1.config;
+
+option java_multiple_files = true;
+option java_package = "com.nutanix.common.v1.config";
+option go_package = "github.com/alfaz-ahmed/cbt-grpc-go-client/com/nutanix/common/v1/config";
+
+
+/*
+ * Many entities in the Nutanix APIs carry flags.  This object captures all the flags associated with that entity through this object.  The field that hosts this type of object must have an attribute called x-bounded-map-keys that tells which flags are actually present for that entity. 
+ */
+
+message Flag {
+  /*
+   * 
+   */
+
+  string name = 1001;
+  /*
+   * 
+   */
+
+  bool value = 1002;
+}
+/*
+ * An unique address that identifies a device on the internet or a local network in IPv4 or IPv6 format. 
+ */
+
+message IPAddress {
+  /*
+   * 
+   */
+
+  com.nutanix.common.v1.config.IPv4Address ipv4 = 1001;
+  /*
+   * 
+   */
+
+  com.nutanix.common.v1.config.IPv6Address ipv6 = 1002;
+}
+/*
+ * 
+ */
+
+message IPv4Address {
+  /*
+   * 
+   */
+
+  string value = 1001;
+  /*
+   * The prefix length of the network to which this host IPv4 address belongs. 
+   */
+
+  int32 prefix_length = 1002;
+}
+/*
+ * 
+ */
+
+message IPv6Address {
+  /*
+   * 
+   */
+
+  string value = 1001;
+  /*
+   * The prefix length of the network to which this host IPv6 address belongs. 
+   */
+
+  int32 prefix_length = 1002;
+}
+/*
+ * OneOf item wrapper message
+ */
+
+message StringWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  string value = 1000;
+}
+/*
+ * OneOf item wrapper message
+ */
+
+message IntegerWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  int32 value = 1000;
+}
+/*
+ * OneOf item wrapper message
+ */
+
+message BooleanWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  bool value = 1000;
+}
+/*
+ * OneOf item wrapper message
+ */
+
+message StringArrayWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  repeated string value = 1000;
+  }
+/*
+ * OneOf item wrapper message
+ */
+
+message StringMapWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  map<string, string> value = 1000;
+  }
+/*
+ * A map describing a set of keys and their corresponding values. 
+ */
+
+message KVPair {
+  /*
+   * A map describing a set of keys and their corresponding values. 
+   */
+  oneof value {
+    /*
+     * 
+     */
+    com.nutanix.common.v1.config.StringWrapper string_value = 1002;
+    /*
+     * 
+     */
+    com.nutanix.common.v1.config.IntegerWrapper integer_value = 1003;
+    /*
+     * 
+     */
+    com.nutanix.common.v1.config.BooleanWrapper boolean_value = 1004;
+    /*
+     * 
+     */
+    com.nutanix.common.v1.config.StringArrayWrapper string_array_value = 1005;
+    /*
+     * 
+     */
+    com.nutanix.common.v1.config.StringMapWrapper string_map_value = 1006;
+  }
+    /*
+   * The key of this key-value pair
+   */
+
+  string name = 1001;
+}
+/*
+ * 
+ */
+
+message Message {
+  /*
+   * A code that uniquely identifies a message. 
+   */
+
+  string code = 1001;
+  /*
+   * The description of the message. 
+   */
+
+  string message = 1002;
+  /*
+   * The locale for the message description. 
+   */
+
+  string locale = 1003;
+  /*
+   * 
+   */
+
+  com.nutanix.common.v1.config.MessageSeverityMessage.MessageSeverity severity = 1004;
+}
+/*
+ * The message severity. 
+ */
+message MessageSeverityMessage {
+  enum MessageSeverity {
+    UNKNOWN = 0;
+    REDACTED = 1;
+    INFO = 1001;
+    WARNING = 1002;
+    ERROR = 1003;
+  }
+}

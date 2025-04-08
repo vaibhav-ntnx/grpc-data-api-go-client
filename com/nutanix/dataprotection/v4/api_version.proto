@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.nutanix.dataprotection.v4;
+
+option java_multiple_files = true;
+option java_package = "com.nutanix.dataprotection.v4";
+option go_package = "github.com/alfaz-ahmed/cbt-grpc-go-client/com/nutanix/dataprotection/v4";
+
+import "google/protobuf/descriptor.proto";
+
+message ApiVersion {
+  string MAJOR = 1;
+  string MINOR = 2;
+  string RELEASE_TYPE = 3;
+  string RELEASE_TYPE_REVISION = 4;
+}
+
+extend google.protobuf.ServiceOptions {
+  ApiVersion ntnx_api_version = 2000;
+}

@@ -1,0 +1,218 @@
+/*
+ * Generated file com/nutanix/dataprotection/v4/content/content.proto.
+ *
+ * Product version: 16.9.0-SNAPSHOT
+ *
+ * Part of the Nutanix Data Proetction gRPC APIs
+ *
+ * (c) 2024 Nutanix Inc.  All rights reserved
+ *
+ */
+
+syntax = "proto3";
+
+package com.nutanix.dataprotection.v4.content;
+
+option java_multiple_files = true;
+option java_package = "com.nutanix.dataprotection.v4.content";
+option go_package = "github.com/alfaz-ahmed/cbt-grpc-go-client/com/nutanix/dataprotection/v4/content";
+
+import "com/nutanix/dataprotection/v4/error/error.proto";
+import "com/nutanix/common/v1/response/response.proto";
+import "com/nutanix/common/v1/config/config.proto";
+
+/*
+ * 
+ */
+
+message BaseRecoveryPointSpec {
+  /*
+   * The external identifier that can be used to retrieve the Recovery point using its URL.
+   */
+
+  string reference_recovery_point_ext_id = 2001;
+  /*
+   * Disk recovery point external identifier.
+   */
+
+  string reference_disk_recovery_point_ext_id = 2002;
+}
+/*
+ * Changed Regions list comprising of offset and regions length pertaining to the Disk Recovery Point.
+ */
+
+message ChangedRegion {
+  /*
+   * The byte offset indicating the start of the regions.
+   */
+
+  int64 offset = 2001;
+  /*
+   * This property specifies the absolute length in bytes up to which the changed regions are requested
+   */
+
+  int64 length = 2002;
+  /*
+   * 
+   */
+
+  com.nutanix.dataprotection.v4.content.RegionTypeMessage.RegionType region_type = 2003;
+}
+/*
+ * OneOf item wrapper message
+ */
+
+message ChangedRegionArrayWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  repeated com.nutanix.dataprotection.v4.content.ChangedRegion value = 1000;
+  }
+/*
+ * OneOf item wrapper message
+ */
+
+message ErrorResponseWrapper {
+  /*
+   * Value field in oneOf item wrapper message
+   */
+
+  com.nutanix.dataprotection.v4.error.ErrorResponse value = 1000;
+}
+/*
+ * REST response for all response codes in API path /dataprotection/v4.0.a1/content/recovery-points/{recoveryPointExtId}/volume-group-recovery-points/{volumeGroupRecoveryPointExtId}/disk-recovery-points/{extId}/$actions/compute-changed-regions Post operation
+ */
+
+message ChangedRegionsModel {
+  /*
+   * REST response for all response codes in API path /dataprotection/v4.0.a1/content/recovery-points/{recoveryPointExtId}/volume-group-recovery-points/{volumeGroupRecoveryPointExtId}/disk-recovery-points/{extId}/$actions/compute-changed-regions Post operation
+   */
+  oneof data {
+    /*
+     * 
+     */
+    com.nutanix.dataprotection.v4.content.ChangedRegionArrayWrapper changed_region_array_data = 2003;
+    /*
+     * 
+     */
+    com.nutanix.dataprotection.v4.content.ErrorResponseWrapper error_response_data = 400;
+  }
+    /*
+   * 
+   */
+
+  com.nutanix.common.v1.response.ApiResponseMetadata metadata = 1001;
+}
+/*
+ * It will contain a redirect IP and a certificate. Use the certificate to invoke the compute changed regions endpoint. Set the certificate as a header when invoking the CBT endpoint with NGINX_IGW_SESSION='CERTIFICATE'.
+ */
+
+message ClusterInfo {
+  /*
+   * The special token in string format. This token needs to be set as session cookie in the redirect call.
+   */
+
+  string certificate = 2001;
+  /*
+   * 
+   */
+
+  com.nutanix.common.v1.config.IPAddress redirect_ip = 2002;
+}
+/*
+ * The type of the region.
+ */
+message RegionTypeMessage {
+  enum RegionType {
+    UNKNOWN = 0;
+    REDACTED = 1;
+    ZEROED = 2001;
+    REGULAR = 2002;
+  }
+}
+
+/*
+ * 
+ */
+
+message VmDiskRecoveryPointClusterDiscoverSpec {
+  /*
+   * 
+   */
+
+  com.nutanix.dataprotection.v4.content.BaseRecoveryPointSpec base = 2004;
+  /*
+   * External identifier of the VM recovery point.
+   */
+
+  string reference_vm_recovery_point_ext_id = 2005;
+}
+/*
+ * 
+ */
+
+message VmRecoveryPointChangedRegionsComputeSpec {
+  /*
+   * 
+   */
+
+  com.nutanix.dataprotection.v4.content.VmDiskRecoveryPointClusterDiscoverSpec base = 2009;
+  /*
+   * Start offset for the changed regions computation. If not provided, diff will be performed from offset 0.
+   */
+
+  int64 offset = 2010;
+  /*
+   * The length to compute the changed region. If the value is not provided, the difference is performed from the start offset to the end of the disk. Note: the end offset might automatically align to a system-defined block boundary.
+   */
+
+  int64 length = 2011;
+  /*
+   * The value for the block aligned and block multiple CRT range, must be one of the supported values in [32768, 65536, 131072, 262144] Bytes.
+   */
+
+  int64 block_size = 2012;
+}
+/*
+ * 
+ */
+
+message VolumeGroupDiskRecoveryPointClusterDiscoverSpec {
+  /*
+   * 
+   */
+
+  com.nutanix.dataprotection.v4.content.BaseRecoveryPointSpec base = 2004;
+  /*
+   * External identifier of the Volume Group recovery point.
+   */
+
+  string reference_volume_group_recovery_point_ext_id = 2005;
+}
+/*
+ * 
+ */
+
+message VolumeGroupRecoveryPointChangedRegionsComputeSpec {
+  /*
+   * 
+   */
+
+  com.nutanix.dataprotection.v4.content.VolumeGroupDiskRecoveryPointClusterDiscoverSpec base = 2009;
+  /*
+   * Start offset for the changed regions computation. If not provided, diff will be performed from offset 0.
+   */
+
+  int64 offset = 2010;
+  /*
+   * The length to compute the changed region. If the value is not provided, the difference is performed from the start offset to the end of the disk. Note: the end offset might automatically align to a system-defined block boundary.
+   */
+
+  int64 length = 2011;
+  /*
+   * The value for the block aligned and block multiple CRT range, must be one of the supported values in [32768, 65536, 131072, 262144] Bytes.
+   */
+
+  int64 block_size = 2012;
+}

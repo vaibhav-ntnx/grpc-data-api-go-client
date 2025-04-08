@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package com.nutanix.dataprotection.v4;
+
+option java_multiple_files = true;
+option java_package = "com.nutanix.dataprotection.v4";
+option go_package = "github.com/alfaz-ahmed/cbt-grpc-go-client/com/nutanix/dataprotection/v4";
+
+import "google/protobuf/descriptor.proto";
+
+message HttpMethodOptions {
+  string POST = 1;
+  string PATCH = 2;
+  string PUT = 3;
+  string DELETE = 4;
+  string GET = 5;
+  string HEAD = 6;
+  string OPTIONS = 7;
+  string TRACE = 8;
+}
+
+extend google.protobuf.MethodOptions {
+  HttpMethodOptions ntnx_api_http = 1000;
+}
