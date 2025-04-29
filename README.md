@@ -26,7 +26,34 @@ go mod download
 # Build the project
 go build -o cbt-grpc-go-client .
 ```
-
+## Run
+Options available
+```
+./cbt-grpc-go-client -h
+Usage of ./cbt-grpc-go-client:
+  -disk_recovery_point_ext_id string
+        Disk Recovery Point Ext ID
+  -function string
+        API to call (vm or volume_group)
+  -pc_ip string
+        Prism Central IP
+  -pe_socket string
+        PE socket in ip:port format
+  -recovery_point_ext_id string
+        Recovery Point Ext ID
+  -reference_disk_recovery_point_ext_id string
+        Reference Disk Recovery Point Ext ID
+  -reference_recovery_point_ext_id string
+        Reference Recovery Point Ext ID
+  -reference_vm_recovery_point_ext_id string
+        Reference VM Recovery Point Ext ID
+  -vm_recovery_point_ext_id string
+        VM Recovery Point Ext ID
+```
+Example command 
+```
+./cbt-grpc-go-client -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 
+```
 ## Code generation from protos
 ```bash
  protoc --go_out=. --go_opt=paths=source_relative \
