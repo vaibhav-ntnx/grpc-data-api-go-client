@@ -125,7 +125,7 @@ func computeVmChangedRegions(serverAddress, jwtToken string) error {
 	defer conn.Close()
 
 	client := vmservice.NewVMRecoveryPointComputeChangedRegionsServiceClient(conn)
-	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", fmt.Sprintf("Bearer %s", jwtToken))
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "Cookie", fmt.Sprintf("NTNX_IGW_SESSION=%s", jwtToken))
 
 	request := &vmservice.VmRecoveryPointComputeChangedRegionsArg{
 		RecoveryPointExtId:   *recoveryPointExtID,
