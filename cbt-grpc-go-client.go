@@ -27,32 +27,49 @@ type DiscoverClusterResponse struct {
 }
 
 var (
-	peSocket                        = flag.String("pe_socket", "", "PE socket in ip:port format")
-	function                        = flag.String("function", "", "API to call (vm or volume_group)")
-	pcIP                            = flag.String("pc_ip", "", "Prism Central IP")
-	recoveryPointExtID              = flag.String("recovery_point_ext_id", "", "Recovery Point Ext ID")
-	vmRecoveryPointExtID            = flag.String("vm_recovery_point_ext_id", "", "VM Recovery Point Ext ID")
-	diskRecoveryPointExtID          = flag.String("disk_recovery_point_ext_id", "", "Disk Recovery Point Ext ID")
-	referenceRecoveryPointExtID     = flag.String("reference_recovery_point_ext_id", "", "Reference Recovery Point Ext ID")
-	referenceDiskRecoveryPointExtID = flag.String("reference_disk_recovery_point_ext_id", "", "Reference Disk Recovery Point Ext ID")
-	referenceVmRecoveryPointExtID   = flag.String("reference_vm_recovery_point_ext_id", "", "Reference VM Recovery Point Ext ID")
+	peSocket                         = flag.String("pe_socket", "", "PE socket in ip:port format")
+	function                         = flag.String("function", "", "API to call (vm or volume_group)")
+	pcIP                             = flag.String("pc_ip", "", "Prism Central IP")
+	recoveryPointExtID               = flag.String("recovery_point_ext_id", "", "Recovery Point Ext ID")
+	vmRecoveryPointExtID             = flag.String("vm_recovery_point_ext_id", "", "VM Recovery Point Ext ID (for 'vm' function)")
+	volumeGroupRecoveryPointExtID    = flag.String("volume_group_recovery_point_ext_id", "", "Volume Group Recovery Point Ext ID (for 'volume_group' function)")
+	diskRecoveryPointExtID           = flag.String("disk_recovery_point_ext_id", "", "Disk Recovery Point Ext ID")
+	referenceRecoveryPointExtID      = flag.String("reference_recovery_point_ext_id", "", "Reference Recovery Point Ext ID")
+	referenceDiskRecoveryPointExtID  = flag.String("reference_disk_recovery_point_ext_id", "", "Reference Disk Recovery Point Ext ID")
+	referenceVmRecoveryPointExtID    = flag.String("reference_vm_recovery_point_ext_id", "", "Reference VM Recovery Point Ext ID")
+	referenceVolumeGroupRecoveryExtID = flag.String("reference_volume_group_recovery_point_ext_id", "", "Reference Volume Group Recovery Point Ext ID")
 )
 
 func fetchJwtToken() (string, error) {
-	url := fmt.Sprintf("https://%s:9440/api/dataprotection/v4.0/config/recovery-points/%s/$actions/discover-cluster", *pcIP, *recoveryPointExtID)
+url := fmt.Sprintf("https://%s:9440/api/dataprotection/v4.0/config/recovery-points/%s/$actions/discover-cluster", *pcIP, *recoveryPointExtID)
+
+	var diskRecoveryPoint map[string]interface{}
+	if *function == "vm" {
+		diskRecoveryPoint = map[string]interface{}{
+			"$objectType":            "dataprotection.v4.content.VmDiskRecoveryPointReference",
+			"recoveryPointExtId":     *recoveryPointExtID,
+			"vmRecoveryPointExtId":   *vmRecoveryPointExtID,
+			"diskRecoveryPointExtId": *diskRecoveryPointExtID,
+		}
+	} else if *function == "volume_group" {
+		diskRecoveryPoint = map[string]interface{}{
+			"$objectType":                 "dataprotection.v4.content.VolumeGroupDiskRecoveryPointReference",
+			"recoveryPointExtId":         *recoveryPointExtID,
+			"volumeGroupRecoveryPointExtId": *volumeGroupRecoveryPointExtID,
+			"diskRecoveryPointExtId":     *diskRecoveryPointExtID,
+		}
+	} else {
+		return "", fmt.Errorf("invalid function: %s", *function)
+	}
+
 	requestBody := map[string]interface{}{
 		"operation": "COMPUTE_CHANGED_REGIONS",
 		"spec": map[string]interface{}{
-			"$objectType": "dataprotection.v4.content.ComputeChangedRegionsClusterDiscoverSpec",
-			"diskRecoveryPoint": map[string]interface{}{
-				"$objectType":            "dataprotection.v4.content.VmDiskRecoveryPointReference",
-				"recoveryPointExtId":     *recoveryPointExtID,
-				"vmRecoveryPointExtId":   *vmRecoveryPointExtID,
-				"diskRecoveryPointExtId": *diskRecoveryPointExtID,
-			},
+			"$objectType":      "dataprotection.v4.content.ComputeChangedRegionsClusterDiscoverSpec",
+			"diskRecoveryPoint": diskRecoveryPoint,
 		},
 	}
-
+	
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return "", fmt.Errorf("error marshaling request body: %v", err)
@@ -175,13 +192,72 @@ func computeVmChangedRegions(serverAddress, jwtToken string) error {
 	return nil
 }
 
+func computeVolumeGroupChangedRegions(serverAddress, jwtToken string) error {
+	conn, err := createGrpcChannel(serverAddress)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	client := vmservice.NewVolumeGroupRecoveryPointComputeChangedRegionsServiceClient(conn)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "Cookie", fmt.Sprintf("NTNX_IGW_SESSION=%s", jwtToken))
+
+	request := &vmservice.VolumeGroupRecoveryPointComputeChangedRegionsArg{
+		RecoveryPointExtId:            *recoveryPointExtID,
+		VolumeGroupRecoveryPointExtId: *volumeGroupRecoveryPointExtID,
+		ExtId:                       *diskRecoveryPointExtID,
+	}
+
+	if *referenceRecoveryPointExtID != "" {
+		request.Body = &content.VolumeGroupRecoveryPointChangedRegionsComputeSpec{
+			Base: &content.VolumeGroupDiskRecoveryPointClusterDiscoverSpec{
+				Base: &content.BaseRecoveryPointSpec{
+					ReferenceRecoveryPointExtId:     *referenceRecoveryPointExtID,
+					ReferenceDiskRecoveryPointExtId: *referenceDiskRecoveryPointExtID,
+				},
+				ReferenceVolumeGroupRecoveryPointExtId: *referenceVolumeGroupRecoveryExtID,
+			},
+			Offset:    0,
+			Length:    1024 * 1024,
+			BlockSize: 65536,
+		}
+	}
+
+	response, err := client.VolumeGroupRecoveryPointComputeChangedRegions(ctx, request)
+	if err != nil {
+		return fmt.Errorf("RPC failed: %v", err)
+	}
+
+	if response.Content.GetChangedRegionArrayData() != nil {
+		for _, region := range response.Content.GetChangedRegionArrayData().Value {
+			fmt.Printf("Offset: %d, Length: %d, Type: %s\n", region.Offset, region.Length, region.RegionType)
+		}
+	} else if response.Content.GetErrorResponseData() != nil {
+		fmt.Printf("Error: %s\n", response.Content.GetErrorResponseData().Value)
+	}
+
+	fmt.Println("\nResponse received.")
+	return nil
+}
+
 func main() {
 	flag.Parse()
 
-	if *peSocket == "" || *pcIP == "" || *recoveryPointExtID == "" || *vmRecoveryPointExtID == "" || *diskRecoveryPointExtID == "" {
+	// Validate required flags based on function choice
+	if *peSocket == "" || *pcIP == "" || *recoveryPointExtID == "" || *diskRecoveryPointExtID == "" {
 		log.Fatal("Missing required arguments. Use -h for help.")
 	}
-	if *function != "vm" && *function != "volume_group" {
+
+	switch *function {
+	case "vm":
+		if *vmRecoveryPointExtID == "" {
+			log.Fatal("Missing vm_recovery_point_ext_id for vm function")
+		}
+	case "volume_group":
+		if *volumeGroupRecoveryPointExtID == "" {
+			log.Fatal("Missing volume_group_recovery_point_ext_id for volume_group function")
+		}
+	default:
 		log.Fatal("Function must be 'vm' or 'volume_group'.")
 	}
 
@@ -192,6 +268,14 @@ func main() {
 		}
 		if err := computeVmChangedRegions(*peSocket, jwtToken); err != nil {
 			log.Fatalf("Error computing VM changed regions: %v", err)
+		}
+	} else if *function == "volume_group" {
+		jwtToken, err := fetchJwtToken()
+		if err != nil {
+			log.Fatalf("Failed to fetch JWT token: %v", err)
+		}
+		if err := computeVolumeGroupChangedRegions(*peSocket, jwtToken); err != nil {
+			log.Fatalf("Error computing Volume Group changed regions: %v", err)
 		}
 	}
 }
