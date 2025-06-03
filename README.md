@@ -24,7 +24,10 @@ cd cbt-grpc-go-client
 go mod download
 
 # Build the project
-go build -o cbt-grpc-go-client .
+go build -o cbt-grpc-client .
+
+# Build the tester for parallel calls
+go build -tags=scaletest -o cbt-grpc-scale-tester
 ```
 ## Run
 Options available
