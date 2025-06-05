@@ -26,14 +26,14 @@ go mod download
 # Build the project
 go build -o cbt-grpc-client .
 
-# Build the tester for parallel calls
+# Build the tester for parallel scale test
 go build -tags=scaletest -o cbt-grpc-scale-tester
 ```
 ## Run
 Options available
 ```
-./cbt-grpc-go-client -h
-Usage of ./cbt-grpc-go-client:
+./cbt-grpc-client -h
+Usage of ./cbt-grpc-client:
   -disk_recovery_point_ext_id string
         Disk Recovery Point Ext ID
   -function string
@@ -55,8 +55,15 @@ Usage of ./cbt-grpc-go-client:
 ```
 Example command 
 ```
-./cbt-grpc-go-client -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 
+./cbt-grpc-client -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 
 ```
+Scale test command
+
+specify number of parallel calls to be made with -parallel switch.
+```
+./cbt-grpc-scale-tester -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 -parallel 8
+```
+
 ## Code generation from protos
 ```bash
  protoc --go_out=. --go_opt=paths=source_relative \
