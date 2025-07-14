@@ -1,79 +1,192 @@
-# Nutanix CBT gRPC Client
+# Nutanix VDisk gRPC Client
 
 ## Summary
-A simple go client to call Nutanix Changed Block Tracking (CBT) APIs over gRPC.
-The client first calls discover_cluster REST API to fetch auth token which is set as NTNX_IGW_SESSION
-into the CBT gRPC call, used by the backend for authn.
+A Go client for Nutanix VDisk gRPC APIs, providing streaming read/write operations for virtual disks with support for compression, checksums, and various disk identifier types.
+
+## Features
+- **Streaming Operations**: Bidirectional gRPC streaming for efficient data transfer
+- **Multiple Disk Identifiers**: Recovery point UUID, VM disk UUID, Volume Group disk UUID
+- **Data Compression**: LZ4, Snappy, Zlib compression support
+- **Data Integrity**: CRC32, SHA1, SHA256 checksum verification
+- **Authentication**: Bearer token authentication
+- **TLS Support**: Configurable TLS/non-TLS connections
+- **Error Handling**: Comprehensive error handling for network, server, and data errors
 
 ## Dependencies
 
 This project uses Go modules for dependency management. Key dependencies:
 
 - google.golang.org/grpc - For gRPC communication
-- github.com/joho/godotenv - For environment variable management
 - google.golang.org/protobuf - For Protocol Buffers support
 
 ## Building
 
 ```bash
 # Clone the repository
-git clone https://github.com/alfaz-ahmed/cbt-grpc-go-client.git
-cd cbt-grpc-go-client
+git clone https://github.com/vaibhav-ntnx/grpc-data-api-go-client.git
+cd grpc-data-api-go-client
 
 # Install dependencies
 go mod download
 
 # Build the project
-go build -o cbt-grpc-client .
+go build -o vdisk-client .
 
 # Build the tester for parallel scale test
-go build -tags=scaletest -o cbt-grpc-scale-tester
-```
-## Run
-Options available
-```
-./cbt-grpc-client -h
-Usage of ./cbt-grpc-client:
-  -disk_recovery_point_ext_id string
-        Disk Recovery Point Ext ID
-  -function string
-        API to call (vm or volume_group)
-  -pc_ip string
-        Prism Central IP
-  -pe_socket string
-        PE socket in ip:port format
-  -recovery_point_ext_id string
-        Recovery Point Ext ID
-  -reference_disk_recovery_point_ext_id string
-        Reference Disk Recovery Point Ext ID
-  -reference_recovery_point_ext_id string
-        Reference Recovery Point Ext ID
-  -reference_vm_recovery_point_ext_id string
-        Reference VM Recovery Point Ext ID
-  -vm_recovery_point_ext_id string
-        VM Recovery Point Ext ID
-```
-Example command 
-```
-./cbt-grpc-client -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 
-```
-Scale test command
-
-specify number of parallel calls to be made with -parallel switch.
-```
-./cbt-grpc-scale-tester -function vm -pc_ip 10.61.4.92 -pe_socket 10.61.42.78:50051 -recovery_point_ext_id c9812280-bcf6-47e9-b050-457209c24ad2 -vm_recovery_point_ext_id cbfb97d6-8464-41f9-8a45-e0e6796af9dc -disk_recovery_point_ext_id c5819a63-1037-4be5-af97-cc16244cc0e5 -parallel 8
+go build -tags=scaletest -o vdisk-scale-tester
 ```
 
-## Code generation from protos
+## Usage
+
+### VDisk Operations
+
+Options available:
+```
+./vdisk-client -h
+VDisk flags:
+  -vdisk_server string
+        VDisk server address in ip:port format
+  -vdisk_operation string
+        VDisk operation (read or write)
+  -vdisk_auth_token string
+        Authentication token for VDisk service
+  -vdisk_use_tls
+        Use TLS for gRPC connection (default: false)
+  -vdisk_skip_tls_verify
+        Skip TLS certificate verification (default: true)
+  
+  # Disk identifier flags (choose one):
+  -disk_recovery_point_uuid string
+        Disk recovery point UUID
+  -vm_disk_uuid string
+        VM disk UUID
+  -vg_disk_uuid string
+        Volume group disk UUID
+  
+  # Read operation flags:
+  -read_offset int
+        Read offset in bytes (default 0)
+  -read_length int
+        Read length in bytes (0 for entire disk)
+  -max_response_size int
+        Maximum response size in bytes (default 1048576)
+  
+  # Write operation flags:
+  -write_offset int
+        Write offset in bytes (default 0)
+  -write_length int
+        Write length in bytes (default 0)
+  -write_data string
+        Data to write (hex string)
+  -compression_type string
+        Compression type (none, lz4, snappy, zlib) (default "none")
+  -checksum_type string
+        Checksum type (none, crc32, sha1, sha256) (default "none")
+  -sequence_number int
+        Sequence number for write ordering (default 0)
+```
+
+### VDisk Read Operation Examples
+
+#### Non-TLS Connection (Default)
 ```bash
- protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative com/nutanix/dataprotection/v4/error/error.proto
- protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative com/nutanix/dataprotection/v4/content/*.proto
- protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative com/nutanix/dataprotection/v4/*.proto
- protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative com/nutanix/common/v1/config/config.proto
- protoc --go_out=. --go_opt=paths=source_relative \
-       --go-grpc_out=. --go-grpc_opt=paths=source_relative com/nutanix/common/v1/response/response.proto
+# Read from VM disk UUID
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=read -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -read_offset=0 -read_length=1048576 -max_response_size=4194304 -vdisk_auth_token="your_auth_token"
+
+# Read from recovery point UUID
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=read -disk_recovery_point_uuid="12345678-1234-5678-9012-123456789012" -read_offset=0 -read_length=0 -max_response_size=4194304 -vdisk_auth_token="your_auth_token"
+
+# Read from Volume Group disk UUID
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=read -vg_disk_uuid="12345678-1234-5678-9012-123456789012" -read_offset=0 -read_length=1048576 -vdisk_auth_token="your_auth_token"
 ```
+
+#### TLS Connection
+```bash
+# Read from VM disk UUID with TLS
+./vdisk-client -vdisk_server="localhost:9443" -vdisk_operation=read -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -read_offset=0 -read_length=1048576 -max_response_size=4194304 -vdisk_use_tls=true -vdisk_skip_tls_verify=true -vdisk_auth_token="your_auth_token"
+```
+
+### VDisk Write Operation Examples
+
+#### Non-TLS Connection (Default)
+```bash
+# Write to VM disk UUID with compression
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=write -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -write_offset=0 -write_length=1024 -write_data="Hello, VDisk!" -compression_type=lz4 -checksum_type=crc32 -sequence_number=1 -vdisk_auth_token="your_auth_token"
+
+# Write to Volume Group disk UUID with checksum
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=write -vg_disk_uuid="12345678-1234-5678-9012-123456789012" -write_offset=0 -write_length=1024 -write_data="Hello, VDisk!" -compression_type=snappy -checksum_type=sha256 -sequence_number=1 -vdisk_auth_token="your_auth_token"
+```
+
+#### TLS Connection
+```bash
+# Write to VM disk UUID with TLS
+./vdisk-client -vdisk_server="localhost:9443" -vdisk_operation=write -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -write_offset=0 -write_length=1024 -write_data="Hello, VDisk!" -compression_type=lz4 -checksum_type=crc32 -sequence_number=1 -vdisk_use_tls=true -vdisk_skip_tls_verify=true -vdisk_auth_token="your_auth_token"
+```
+
+## Examples
+
+Run the example script to see various usage patterns:
+```bash
+chmod +x vdisk-examples.sh
+./vdisk-examples.sh
+```
+
+## TLS Configuration
+
+The client supports both TLS and non-TLS connections:
+
+- **Default**: Non-TLS connections (suitable for local development and non-TLS gRPC servers)
+- **TLS**: Use `-vdisk_use_tls=true` to enable TLS
+- **TLS Verification**: Use `-vdisk_skip_tls_verify=false` to enable certificate verification (default is to skip verification)
+
+## Code generation from proto
+
+```bash
+# Generate Go code from VDisk proto (run from project root)
+protoc --go_out=. --go_opt=paths=source_relative \
+       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+       protos/stargate_vdisk_rpc_svc.proto
+```
+
+## Project Structure
+
+```
+grpc-data-api-go-client/
+├── main.go                               # Main entry point
+├── vdisk-utils.go                        # VDisk gRPC client implementation
+├── vdisk-examples.sh                     # Example usage scripts
+├── go.mod                                # Go module dependencies
+├── go.sum                                # Go module checksums
+├── protos/                               # Protocol buffer definitions
+│   ├── stargate_vdisk_rpc_svc.proto      # VDisk service proto definition
+│   ├── stargate_vdisk_rpc_svc.pb.go      # Generated VDisk protobuf code
+│   └── stargate_vdisk_rpc_svc_grpc.pb.go # Generated VDisk gRPC code
+└── README.md                             # This file
+```
+
+## API Reference
+
+### VDisk Service Methods
+
+- **VDiskStreamRead**: Streaming read operation from virtual disk
+- **VDiskStreamWrite**: Streaming write operation to virtual disk
+
+### Disk Identifier Types
+
+- **Recovery Point UUID**: Identifies disk by recovery point
+- **VM Disk UUID**: Identifies disk by VM disk UUID
+- **Volume Group Disk UUID**: Identifies disk by volume group disk UUID
+
+### Compression Types
+
+- **None**: No compression
+- **LZ4**: LZ4 compression
+- **Snappy**: Snappy compression
+- **Zlib**: Zlib compression
+
+### Checksum Types
+
+- **None**: No checksum
+- **CRC32**: CRC32 checksum
+- **SHA1**: SHA1 checksum
+- **SHA256**: SHA256 checksum

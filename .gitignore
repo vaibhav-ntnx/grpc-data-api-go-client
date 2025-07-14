@@ -6,8 +6,8 @@
 *.dylib
 *.test
 *.out
-cbt-grpc-go-client
-cbt-grpc-scale-tester
+vdisk-client
+vdisk-scale-tester
 # Build directories
 /bin/
 /build/

@@ -1,0 +1,142 @@
+/*
+ * Copyright (c) 2025 Nutanix Inc. All rights reserved.
+ *
+ * Author: vaibhav.sanap@nutanix.com
+ */
+
+syntax = "proto2";
+
+// Standalone gRPC service for VDisk read/write operations
+// Global limit on Amount data per sec across all active streams
+// Global limit on Number Of streams
+
+option go_package = "github.com/vaibhav-ntnx/grpc-data-api-go-client/protos";
+
+service StargateVDiskRpcSvc {
+  // Writes data to a vdisk at a specific offset using streaming.
+  rpc VDiskStreamWrite(stream VDiskWriteArg) returns (stream VDiskWriteRet);
+     
+  // Reads data from a vdisk starting at a specific offset using streaming.
+  rpc VDiskStreamRead(stream VDiskReadArg) returns (stream VDiskReadRet);
+}
+
+// Disk recovery point information
+message DiskRecoveryPoint {
+  optional string recovery_point_uuid = 1;
+}
+
+// Disk identifier with multiple ways to identify a disk
+message DiskIdentifier {
+  oneof identifier {
+    DiskRecoveryPoint disk_recovery_point = 1;
+    string vm_disk_uuid = 2;
+    string  vg_disk_uuid = 3;
+  }
+}
+
+// Compression types supported
+enum CompressionType {
+  kNoCompression = 0;
+  kLZ4Compression = 1;
+  kSnappyCompression = 2;
+  kZlibCompression = 3;
+}
+
+// Checksum types supported
+enum ChecksumType {
+  kNoChecksum = 0;
+  kCRC32 = 1;
+  kSHA1 = 2;
+  kSHA256 = 3;
+}
+
+// Represents a range of data on disk
+message DiskDataRange {
+  // Start offset of the range in the disk.
+  optional int64 offset = 1;
+
+  // Length of the range in bytes.
+  optional int64 length = 2;
+
+  // If set to true, this range contains zero data.
+  optional bool zero_data = 3;
+}
+
+// Request message for a read operation.
+message VDiskReadArg {
+  // Disk identifier
+  required DiskIdentifier disk_id = 1;
+  
+  // Offset, if not set read from start
+  optional int64 offset = 2;
+
+  // Length, if not set return whole disk data, with limit to max response size
+  optional int64 length = 3;
+
+  // Maximum response size in bytes
+  optional int64 max_response_size = 4;
+}
+
+// Response message for a read operation.
+message VDiskReadRet {
+  // List of ranges being returned
+  repeated DiskDataRange range_vec = 1;
+
+  // Actual data payload
+  optional bytes data = 2;
+
+  // Error message in case of failure
+  optional string error_message = 3;
+
+  // Indicates if more data is available
+  optional bool has_more_data = 4;
+
+  // Total size of the disk
+  optional int64 total_disk_size = 5;
+}
+
+// Request message for a write operation
+message VDiskWriteArg {
+  // Disk identifier
+  required DiskIdentifier disk_id = 1;
+
+  // List of ranges to write
+  repeated DiskDataRange range_vec = 2;
+
+  // Compression type used for data
+  optional CompressionType compression_type = 3;
+
+  // Checksum type used for data verification
+  optional ChecksumType checksum_type = 4;
+
+  // Data to be written to the disk. The data payload here should be a
+  // concatenation of data corresponding to each non-zero range.
+  optional bytes data = 5;
+
+  // Checksum value for data verification
+  optional uint32 checksum = 6;
+
+  // Sequence number for ordering writes
+  optional int64 sequence_number = 7;
+}
+
+// Response message for a write operation
+message VDiskWriteRet {
+  // Indicates whether the write was successful
+  optional bool success = 1;
+  
+  // For correlating between request and response
+  optional int64 offset = 2;
+
+  // For correlating between request and response          
+  optional int64 length = 3;
+
+  // Error message in case of failure
+  optional string error_message = 4;
+
+  // Sequence number from the request
+  optional int64 sequence_number = 5;
+
+  // Bytes actually written
+  optional int64 bytes_written = 6;
+}

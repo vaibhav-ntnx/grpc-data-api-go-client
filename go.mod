@@ -1,4 +1,4 @@
-module github.com/alfaz-ahmed/cbt-grpc-go-client
+module github.com/vaibhav-ntnx/grpc-data-api-go-client
 
 go 1.22.0
 
