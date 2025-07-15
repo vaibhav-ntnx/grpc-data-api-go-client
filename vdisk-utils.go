@@ -153,12 +153,6 @@ func vdiskStreamRead(serverAddress, authToken string) error {
 		return fmt.Errorf("failed to send read request: %v", err)
 	}
 
-	// Close the send side of the stream
-	err = stream.CloseSend()
-	if err != nil {
-		return fmt.Errorf("failed to close send stream: %v", err)
-	}
-
 	// Receive responses
 	fmt.Println("Receiving read responses...")
 	totalBytesRead := 0
@@ -219,6 +213,12 @@ func vdiskStreamRead(serverAddress, authToken string) error {
 
 	fmt.Printf("Read operation completed successfully. Total bytes read: %d, responses received: %d\n", 
 		totalBytesRead, responseCount)
+
+	// Close the send side of the stream
+	err = stream.CloseSend()
+	if err != nil {
+		return fmt.Errorf("failed to close send stream: %v", err)
+	}
 	return nil
 }
 
