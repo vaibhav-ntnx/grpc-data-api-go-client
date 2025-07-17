@@ -139,4 +139,7 @@ message VDiskWriteRet {
 
   // Bytes actually written
   optional int64 bytes_written = 6;
+
+  // Write retry count if write failed
+  optional int32 retry_count = 7;
 }

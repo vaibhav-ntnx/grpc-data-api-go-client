@@ -1,10 +1,11 @@
 # Nutanix VDisk gRPC Client
 
 ## Summary
-A Go client for Nutanix VDisk gRPC APIs, providing streaming read/write operations for virtual disks with support for compression, checksums, and various disk identifier types.
+A Go client for Nutanix VDisk gRPC APIs, providing streaming read/write operations for virtual disks with support for compression, checksums, various disk identifier types, and batch/concurrent operations.
 
 ## Features
 - **Streaming Operations**: Bidirectional gRPC streaming for efficient data transfer
+- **Batch Operations**: Concurrent execution of multiple VDisk operations for testing performance and concurrency
 - **Multiple Disk Identifiers**: Recovery point UUID, VM disk UUID, Volume Group disk UUID
 - **Data Compression**: LZ4, Snappy, Zlib compression support
 - **Data Integrity**: CRC32, SHA1, SHA256 checksum verification
@@ -54,6 +55,14 @@ VDisk flags:
         Use TLS for gRPC connection (default: false)
   -vdisk_skip_tls_verify
         Skip TLS certificate verification (default: true)
+  
+  # Batch operation flags:
+  -batch_mode
+        Enable batch mode for concurrent operations (default: false)
+  -batch_size int
+        Number of concurrent operations to run (default: 1)
+  -batch_delay duration
+        Delay between starting batch operations (default: 0s)
   
   # Disk identifier flags (choose one):
   -disk_recovery_point_uuid string
@@ -122,6 +131,35 @@ VDisk flags:
 # Write to VM disk UUID with TLS
 ./vdisk-client -vdisk_server="localhost:9443" -vdisk_operation=write -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -write_offset=0 -write_length=1024 -write_data="Hello, VDisk!" -compression_type=lz4 -checksum_type=crc32 -sequence_number=1 -vdisk_use_tls=true -vdisk_skip_tls_verify=true -vdisk_auth_token="your_auth_token"
 ```
+
+### Batch Operation Examples
+
+The client supports batch/concurrent operations for testing performance and concurrency. In batch mode, multiple operations run concurrently using goroutines.
+
+#### Batch Read Operations
+```bash
+# 5 concurrent read operations
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=read -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -batch_mode=true -batch_size=5 -read_offset=0 -read_length=1048576 -vdisk_auth_token="your_auth_token"
+
+# 10 concurrent reads with staggered start (50ms delay between starts)
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=read -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -batch_mode=true -batch_size=10 -batch_delay=50ms -read_offset=0 -read_length=524288 -vdisk_auth_token="your_auth_token"
+```
+
+#### Batch Write Operations
+```bash
+# 3 concurrent write operations
+./vdisk-client -vdisk_server="localhost:9090" -vdisk_operation=write -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -batch_mode=true -batch_size=3 -write_offset=0 -write_length=1024 -write_data="BatchData" -compression_type=lz4 -checksum_type=crc32 -sequence_number=100 -vdisk_auth_token="your_auth_token"
+
+# 20 concurrent writes with TLS and staggered start
+./vdisk-client -vdisk_server="localhost:9443" -vdisk_operation=write -vm_disk_uuid="12345678-1234-5678-9012-123456789012" -batch_mode=true -batch_size=20 -batch_delay=25ms -write_offset=0 -write_length=2048 -write_data="ConcurrentTest" -compression_type=snappy -checksum_type=sha256 -vdisk_use_tls=true -vdisk_auth_token="your_auth_token"
+```
+
+#### Batch Operation Features
+- **Concurrent Execution**: Operations run in parallel using goroutines
+- **Unique Data Per Operation**: Each operation uses slightly different offsets and data to avoid conflicts
+- **Comprehensive Results**: Detailed summary including success rate, timing, and data processed
+- **Staggered Start**: Optional delay between starting operations to simulate real-world scenarios
+- **Thread-Safe**: Uses WaitGroup for proper synchronization
 
 ## Examples
 

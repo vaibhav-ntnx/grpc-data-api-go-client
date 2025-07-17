@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -22,6 +23,11 @@ var (
 	vdiskAuthToken     = flag.String("vdisk_auth_token", "", "Authentication token for VDisk service")
 	vdiskUseTLS        = flag.Bool("vdisk_use_tls", false, "Use TLS for gRPC connection (default: false)")
 	vdiskSkipTLSVerify = flag.Bool("vdisk_skip_tls_verify", true, "Skip TLS certificate verification (default: true)")
+	
+	// Batch operation flags
+	batchMode          = flag.Bool("batch_mode", false, "Enable batch mode for concurrent operations")
+	batchSize          = flag.Int("batch_size", 1, "Number of concurrent operations to run")
+	batchDelay         = flag.Duration("batch_delay", 0, "Delay between starting batch operations")
 	
 	// Disk identifier flags
 	diskRecoveryPointUuid = flag.String("disk_recovery_point_uuid", "", "Disk recovery point UUID")
@@ -41,6 +47,17 @@ var (
 	checksumType       = flag.String("checksum_type", "none", "Checksum type (none, crc32, sha1, sha256)")
 	sequenceNumber     = flag.Int64("sequence_number", 0, "Sequence number for write ordering")
 )
+
+// BatchOperationResult holds the result of a single operation in a batch
+type BatchOperationResult struct {
+	OperationID   int
+	Success       bool
+	Error         error
+	Duration      time.Duration
+	BytesRead     int
+	BytesWritten  int64
+	ResponseCount int
+}
 
 func createVDiskGrpcChannel(serverAddress string) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
@@ -336,6 +353,304 @@ func vdiskStreamWrite(serverAddress, authToken string) error {
 	return nil
 }
 
+// vdiskStreamReadSingle performs a single read operation and returns the result
+func vdiskStreamReadSingle(serverAddress, authToken string, operationID int) BatchOperationResult {
+	start := time.Now()
+	result := BatchOperationResult{
+		OperationID: operationID,
+		Success:     false,
+	}
+
+	conn, err := createVDiskGrpcChannel(serverAddress)
+	if err != nil {
+		result.Error = err
+		result.Duration = time.Since(start)
+		return result
+	}
+	defer conn.Close()
+
+	client := protos.NewStargateVDiskRpcSvcClient(conn)
+	
+	ctx := context.Background()
+	if authToken != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
+	}
+
+	stream, err := client.VDiskStreamRead(ctx)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to create read stream: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Send read request with offset adjusted by operation ID for testing
+	readReq := &protos.VDiskReadArg{
+		DiskId:          createDiskIdentifier(),
+		Offset:          func() *int64 { offset := *readOffset + int64(operationID)*1024; return &offset }(),
+		Length:          readLength,
+		MaxResponseSize: maxResponseSize,
+	}
+
+	fmt.Printf("[Op %d] Sending read request: offset=%d, length=%d\n", operationID, *readReq.Offset, *readLength)
+	err = stream.Send(readReq)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to send read request: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Receive responses
+	totalBytesRead := 0
+	responseCount := 0
+	
+	for {
+		response, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result.Error = fmt.Errorf("stream error: %v", err)
+			result.Duration = time.Since(start)
+			return result
+		}
+
+		responseCount++
+
+		if response.ErrorMessage != nil {
+			errorMsg := *response.ErrorMessage
+			if errorMsg != "" && errorMsg != "Read operation successful" && 
+			   errorMsg != "Operation completed successfully" {
+				result.Error = fmt.Errorf("server error: %s", errorMsg)
+				result.Duration = time.Since(start)
+				return result
+			}
+		}
+
+		totalBytesRead += len(response.Data)
+		
+		if response.HasMoreData != nil && !*response.HasMoreData {
+			break
+		}
+	}
+
+	// Close the send side of the stream
+	err = stream.CloseSend()
+	if err != nil {
+		result.Error = fmt.Errorf("failed to close send stream: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	result.Success = true
+	result.BytesRead = totalBytesRead
+	result.ResponseCount = responseCount
+	result.Duration = time.Since(start)
+	
+	fmt.Printf("[Op %d] Read completed: %d bytes, %d responses, %v\n", 
+		operationID, totalBytesRead, responseCount, result.Duration)
+	
+	return result
+}
+
+// vdiskStreamWriteSingle performs a single write operation and returns the result
+func vdiskStreamWriteSingle(serverAddress, authToken string, operationID int) BatchOperationResult {
+	start := time.Now()
+	result := BatchOperationResult{
+		OperationID: operationID,
+		Success:     false,
+	}
+
+	conn, err := createVDiskGrpcChannel(serverAddress)
+	if err != nil {
+		result.Error = err
+		result.Duration = time.Since(start)
+		return result
+	}
+	defer conn.Close()
+
+	client := protos.NewStargateVDiskRpcSvcClient(conn)
+	
+	ctx := context.Background()
+	if authToken != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
+	}
+
+	stream, err := client.VDiskStreamWrite(ctx)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to create write stream: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Create write request with offset adjusted by operation ID for testing
+	writeReq := &protos.VDiskWriteArg{
+		DiskId: createDiskIdentifier(),
+		RangeVec: []*protos.DiskDataRange{
+			{
+				Offset:   func() *int64 { offset := *writeOffset + int64(operationID)*1024; return &offset }(),
+				Length:   writeLength,
+				ZeroData: func() *bool { b := false; return &b }(),
+			},
+		},
+		CompressionType: func() *protos.CompressionType { ct := getCompressionType(*compressionType); return &ct }(),
+		ChecksumType:    func() *protos.ChecksumType { ct := getChecksumType(*checksumType); return &ct }(),
+		Data:            []byte(fmt.Sprintf("%s_op%d", *writeData, operationID)), // Unique data per operation
+		SequenceNumber:  func() *int64 { seq := *sequenceNumber + int64(operationID); return &seq }(),
+	}
+
+	fmt.Printf("[Op %d] Sending write request: offset=%d, length=%d, sequence=%d\n", 
+		operationID, *writeReq.RangeVec[0].Offset, *writeLength, *writeReq.SequenceNumber)
+	
+	err = stream.Send(writeReq)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to send write request: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Close the send side of the stream
+	err = stream.CloseSend()
+	if err != nil {
+		result.Error = fmt.Errorf("failed to close send stream: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Receive responses
+	responseCount := 0
+	var totalBytesWritten int64 = 0
+	
+	for {
+		response, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result.Error = fmt.Errorf("stream error: %v", err)
+			result.Duration = time.Since(start)
+			return result
+		}
+
+		responseCount++
+
+		if response.ErrorMessage != nil {
+			errorMsg := *response.ErrorMessage
+			if errorMsg != "" && errorMsg != "Write operation successful" && 
+			   errorMsg != "Operation completed successfully" {
+				result.Error = fmt.Errorf("server error: %s", errorMsg)
+				result.Duration = time.Since(start)
+				return result
+			}
+		}
+
+		if response.BytesWritten != nil {
+			totalBytesWritten += *response.BytesWritten
+		}
+	}
+
+	result.Success = true
+	result.BytesWritten = totalBytesWritten
+	result.ResponseCount = responseCount
+	result.Duration = time.Since(start)
+	
+	fmt.Printf("[Op %d] Write completed: %d bytes written, %d responses, %v\n", 
+		operationID, totalBytesWritten, responseCount, result.Duration)
+	
+	return result
+}
+
+// runBatchVDiskOperations runs multiple VDisk operations concurrently
+func runBatchVDiskOperations() error {
+	if *vdiskServerAddress == "" {
+		return fmt.Errorf("vdisk_server address is required")
+	}
+
+	if *vdiskOperation == "" {
+		return fmt.Errorf("vdisk_operation is required (read or write)")
+	}
+
+	// Validate disk identifier
+	if *diskRecoveryPointUuid == "" && *vmDiskUuid == "" && *vgDiskUuid == "" {
+		return fmt.Errorf("one of disk_recovery_point_uuid, vm_disk_uuid, or vg_disk_uuid is required")
+	}
+
+	if *vdiskOperation == "write" && *writeData == "" {
+		return fmt.Errorf("write_data is required for write operation")
+	}
+
+	fmt.Printf("Starting batch %s operations: %d concurrent operations\n", *vdiskOperation, *batchSize)
+	
+	start := time.Now()
+	results := make([]BatchOperationResult, *batchSize)
+	
+	// Use WaitGroup to wait for all goroutines to complete
+	var wg sync.WaitGroup
+	
+	// Run operations concurrently using a for loop as requested
+	for i := 0; i < *batchSize; i++ {
+		wg.Add(1)
+		
+		go func(operationID int) {
+			defer wg.Done()
+			
+			// Add delay between starting operations if specified
+			if *batchDelay > 0 && operationID > 0 {
+				time.Sleep(time.Duration(operationID) * *batchDelay)
+			}
+			
+			var result BatchOperationResult
+			switch *vdiskOperation {
+			case "read":
+				result = vdiskStreamReadSingle(*vdiskServerAddress, *vdiskAuthToken, operationID)
+			case "write":
+				result = vdiskStreamWriteSingle(*vdiskServerAddress, *vdiskAuthToken, operationID)
+			}
+			
+			results[operationID] = result
+		}(i)
+	}
+	
+	// Wait for all operations to complete
+	wg.Wait()
+	
+	totalDuration := time.Since(start)
+	
+	// Print summary results
+	fmt.Printf("\n=== Batch Operation Summary ===\n")
+	fmt.Printf("Total operations: %d\n", *batchSize)
+	fmt.Printf("Total time: %v\n", totalDuration)
+	
+	successCount := 0
+	totalBytes := int64(0)
+	totalResponses := 0
+	
+	for _, result := range results {
+		if result.Success {
+			successCount++
+			if *vdiskOperation == "read" {
+				totalBytes += int64(result.BytesRead)
+			} else {
+				totalBytes += result.BytesWritten
+			}
+			totalResponses += result.ResponseCount
+		} else {
+			fmt.Printf("Operation %d failed: %v\n", result.OperationID, result.Error)
+		}
+	}
+	
+	fmt.Printf("Successful operations: %d/%d\n", successCount, *batchSize)
+	fmt.Printf("Total bytes processed: %d\n", totalBytes)
+	fmt.Printf("Total responses: %d\n", totalResponses)
+	fmt.Printf("Average operation time: %v\n", totalDuration/time.Duration(*batchSize))
+	
+	if successCount != *batchSize {
+		return fmt.Errorf("batch operation partially failed: %d/%d operations succeeded", successCount, *batchSize)
+	}
+	
+	fmt.Printf("All batch operations completed successfully!\n")
+	return nil
+}
+
 func runVDiskOperation() error {
 	if *vdiskServerAddress == "" {
 		return fmt.Errorf("vdisk_server address is required")
@@ -348,6 +663,11 @@ func runVDiskOperation() error {
 	// Validate disk identifier
 	if *diskRecoveryPointUuid == "" && *vmDiskUuid == "" && *vgDiskUuid == "" {
 		return fmt.Errorf("one of disk_recovery_point_uuid, vm_disk_uuid, or vg_disk_uuid is required")
+	}
+
+	// Check if batch mode is enabled
+	if *batchMode {
+		return runBatchVDiskOperations()
 	}
 
 	start := time.Now()
