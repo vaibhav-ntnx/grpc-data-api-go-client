@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/vaibhav-ntnx/grpc-data-api-go-client/protos"
@@ -23,8 +24,13 @@ var (
 	vdiskServerAddress = flag.String("vdisk_server", "", "VDisk server address in ip:port format")
 	vdiskOperation     = flag.String("vdisk_operation", "", "VDisk operation (read or write)")
 	vdiskAuthToken     = flag.String("vdisk_auth_token", "", "Authentication token for VDisk service")
-	vdiskUseTLS        = flag.Bool("vdisk_use_tls", false, "Use TLS for gRPC connection (default: false)")
+	vdiskUseTLS        = flag.Bool("vdisk_use_tls", true, "Use TLS for gRPC connection (default: false)")
 	vdiskSkipTLSVerify = flag.Bool("vdisk_skip_tls_verify", true, "Skip TLS certificate verification (default: true)")
+
+	// Authentication flags
+	authType       = flag.String("auth_type", "cookie", "Authentication type (cookie, bearer, basic)")
+	cookieValue    = flag.String("cookie_value", "NTNX_IGW_SESSION=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ1c2VyX3Byb2ZpbGUiOiJ7XCJfcGVybWFuZW50XCI6IHRydWUsIFwiYXV0aGVudGljYXRlZFwiOiB0cnVlLCBcImFwcF9kYXRhXCI6IHt9LCBcInVzZXJuYW1lXCI6IFwiYWRtaW5cIiwgXCJkb21haW5cIjogbnVsbCwgXCJ1c2VydHlwZVwiOiBcImxvY2FsXCIsIFwibGVnYWN5X2FkbWluX2F1dGhvcml0aWVzXCI6IFtcIlJPTEVfQ0xVU1RFUl9BRE1JTlwiLCBcIlJPTEVfQ0xVU1RFUl9WSUVXRVJcIiwgXCJST0xFX1VTRVJfQURNSU5cIl0sIFwicm9sZXNcIjogW1wiUHJpc20gQWRtaW5cIiwgXCJQcmlzbSBWaWV3ZXJcIiwgXCJTdXBlciBBZG1pblwiXSwgXCJhdXRoX2luZm9cIjoge1widGVuYW50X3V1aWRcIjogXCIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDBcIiwgXCJzZXJ2aWNlX25hbWVcIjogbnVsbCwgXCJ1c2VyX3V1aWRcIjogXCIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDBcIiwgXCJ0b2tlbl9hdWRpZW5jZVwiOiBudWxsLCBcInRva2VuX2lzc3VlclwiOiBudWxsLCBcInVzZXJuYW1lXCI6IFwiYWRtaW5cIiwgXCJyZW1vdGVfYXV0aG9yaXphdGlvblwiOiBudWxsLCBcInJlbW90ZV9hdXRoX2pzb25cIjogbnVsbCwgXCJ3b3JrZmxvd190eXBlXCI6IG51bGwsIFwidXNlcl9ncm91cF91dWlkc1wiOiBudWxsfSwgXCJsb2dfdXVpZFwiOiBcImUxYjBhYzAyLWFiMjYtNGI4ZS1iMGU4LWQ1ZmM4YWQ0NTViNFwiLCBcIm9yaWdfdG9rZW5faXNzX3RpbWVcIjogMTc1MzY5NDM1OH0iLCJqdGkiOiI3ZTVmMmY0OC04NmI3LTM1ZDItOWI4My1jODI2Mzg4OGU1ZWUiLCJpc3MiOiJBdGhlbmEiLCJpYXQiOjE3NTM2OTQzNTgsImV4cCI6MTc1MzY5NTI1OH0.IKoCJit58Wa2VwDSGGE7WXQPtS9SoP4Kl2efen4nau-3Wkp9Tk1b_-7rirQI6X-Zm3fsXWFfXrcDHay1JlFm1rYl2OL1gf75-N3RfJOo1odetuxo4cQYpXpvKI7LyFFCoMxncRSMXfRylZ_Yb7i_rmqRo6CdxI3UJhNplw0nl6QlfPuNbb9TKgKRIsJCQcQoZAIl_C-XvLFuBC_-RaQijVEuDYta-A3u9g9kcmuFDnFmAsTN1DWNy9CXrusHBZp3VGPtdk3lmJ0g_HQiNbZO9-xAZrkcuSFqMBMhiyRsJ6w4ZgIK8appMoToQFeX1J3RnFRaErYrClxs6hmAnxUEew;NTNX_MERCURY_IGW_SESSION=CgVhZG1pbhCaiJ3EBhoHTWVyY3VyeSAA|26y8+JOdk/pM1CWEYjQvwlQTWjZ1WcSYIrjnN8+jKkY=", "Cookie value for cookie authentication")
+	basicAuthValue = flag.String("basic_auth_value", "YWRtaW46TnV0YW5peC4xMjM=", "Base64 encoded credentials for basic auth")
 
 	// Batch operation flags
 	batchMode  = flag.Bool("batch_mode", false, "Enable batch mode for concurrent operations")
@@ -93,6 +99,46 @@ type ThroughputResult struct {
 	Timestamp    time.Time
 }
 
+// Connection pool for throughput testing
+var (
+	connectionPool      sync.Map // map[string]*grpc.ClientConn
+	connectionPoolMutex sync.RWMutex
+	cachedAuthContext   context.Context
+	authContextOnce     sync.Once
+)
+
+// getCachedAuthContext returns a cached authentication context for throughput testing
+func getCachedAuthContext() context.Context {
+	authContextOnce.Do(func() {
+		cachedAuthContext = createAuthContext(context.Background())
+	})
+	return cachedAuthContext
+}
+
+// getPooledConnection gets or creates a pooled connection
+func getPooledConnection(serverAddress string) (*grpc.ClientConn, error) {
+	if conn, ok := connectionPool.Load(serverAddress); ok {
+		if grpcConn, ok := conn.(*grpc.ClientConn); ok {
+			// Check if connection is still valid
+			if grpcConn.GetState().String() != "SHUTDOWN" {
+				return grpcConn, nil
+			}
+			// Remove invalid connection
+			connectionPool.Delete(serverAddress)
+		}
+	}
+
+	// Create new connection
+	conn, err := createVDiskGrpcChannel(serverAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in pool
+	connectionPool.Store(serverAddress, conn)
+	return conn, nil
+}
+
 func createVDiskGrpcChannel(serverAddress string) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
 
@@ -115,12 +161,55 @@ func createVDiskGrpcChannel(serverAddress string) (*grpc.ClientConn, error) {
 		grpc.MaxCallSendMsgSize(100*1024*1024),
 	))
 
+	// Add keepalive settings for better connection management
+	kacp := keepalive.ClientParameters{
+		Time:                30 * time.Second, // Send pings every 30 seconds
+		Timeout:             5 * time.Second,  // Wait 5 seconds for ping ack
+		PermitWithoutStream: true,             // Send pings even without active streams
+	}
+	opts = append(opts, grpc.WithKeepaliveParams(kacp))
+
+	fmt.Printf("Using authentication type: %s\n", *authType)
+
 	conn, err := grpc.Dial(serverAddress, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to VDisk server: %v", err)
 	}
 
 	return conn, nil
+}
+
+// createAuthContext creates a context with appropriate authentication headers
+func createAuthContext(baseCtx context.Context) context.Context {
+	ctx := baseCtx
+
+	switch *authType {
+	case "bearer":
+		if *vdiskAuthToken != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", *vdiskAuthToken))
+			fmt.Println("Using Bearer token authentication")
+		} else {
+			fmt.Println("Warning: Bearer auth selected but no token provided")
+		}
+	case "basic":
+		if *basicAuthValue != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Basic %s", *basicAuthValue))
+			fmt.Println("Using Basic authentication")
+		} else {
+			fmt.Println("Warning: Basic auth selected but no credentials provided")
+		}
+	case "cookie":
+		if *cookieValue != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, "Cookie", *cookieValue)
+			fmt.Println("Using Cookie authentication")
+		} else {
+			fmt.Println("Warning: Cookie auth selected but no cookie provided")
+		}
+	default:
+		fmt.Printf("Warning: Unknown authentication type '%s', proceeding without authentication\n", *authType)
+	}
+
+	return ctx
 }
 
 func createDiskIdentifier() *protos.DiskIdentifier {
@@ -171,7 +260,7 @@ func getChecksumType(checksumStr string) protos.ChecksumType {
 	}
 }
 
-func vdiskStreamRead(serverAddress, authToken string) error {
+func vdiskStreamRead(serverAddress string) error {
 	conn, err := createVDiskGrpcChannel(serverAddress)
 	if err != nil {
 		return err
@@ -181,9 +270,7 @@ func vdiskStreamRead(serverAddress, authToken string) error {
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
 	ctx := context.Background()
-	if authToken != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
-	}
+	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamRead(ctx)
 	if err != nil {
@@ -273,7 +360,7 @@ func vdiskStreamRead(serverAddress, authToken string) error {
 	return nil
 }
 
-func vdiskStreamWrite(serverAddress, authToken string) error {
+func vdiskStreamWrite(serverAddress string) error {
 	conn, err := createVDiskGrpcChannel(serverAddress)
 	if err != nil {
 		return err
@@ -283,9 +370,7 @@ func vdiskStreamWrite(serverAddress, authToken string) error {
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
 	ctx := context.Background()
-	if authToken != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
-	}
+	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamWrite(ctx)
 	if err != nil {
@@ -388,7 +473,7 @@ func vdiskStreamWrite(serverAddress, authToken string) error {
 }
 
 // vdiskStreamReadSingle performs a single read operation and returns the result
-func vdiskStreamReadSingle(serverAddress, authToken string, operationID int) BatchOperationResult {
+func vdiskStreamReadSingle(serverAddress string, operationID int) BatchOperationResult {
 	start := time.Now()
 	result := BatchOperationResult{
 		OperationID: operationID,
@@ -406,9 +491,7 @@ func vdiskStreamReadSingle(serverAddress, authToken string, operationID int) Bat
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
 	ctx := context.Background()
-	if authToken != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
-	}
+	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamRead(ctx)
 	if err != nil {
@@ -487,7 +570,7 @@ func vdiskStreamReadSingle(serverAddress, authToken string, operationID int) Bat
 }
 
 // vdiskStreamWriteSingle performs a single write operation and returns the result
-func vdiskStreamWriteSingle(serverAddress, authToken string, operationID int) BatchOperationResult {
+func vdiskStreamWriteSingle(serverAddress string, operationID int) BatchOperationResult {
 	start := time.Now()
 	result := BatchOperationResult{
 		OperationID: operationID,
@@ -505,9 +588,7 @@ func vdiskStreamWriteSingle(serverAddress, authToken string, operationID int) Ba
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
 	ctx := context.Background()
-	if authToken != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
-	}
+	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamWrite(ctx)
 	if err != nil {
@@ -635,9 +716,9 @@ func runBatchVDiskOperations() error {
 			var result BatchOperationResult
 			switch *vdiskOperation {
 			case "read":
-				result = vdiskStreamReadSingle(*vdiskServerAddress, *vdiskAuthToken, operationID)
+				result = vdiskStreamReadSingle(*vdiskServerAddress, operationID)
 			case "write":
-				result = vdiskStreamWriteSingle(*vdiskServerAddress, *vdiskAuthToken, operationID)
+				result = vdiskStreamWriteSingle(*vdiskServerAddress, operationID)
 			}
 
 			results[operationID] = result
@@ -686,7 +767,7 @@ func runBatchVDiskOperations() error {
 }
 
 // runThroughputSingleOperation performs a single operation for throughput testing
-func runThroughputSingleOperation(serverAddress, authToken string, operationID int64, semaphore chan struct{}) ThroughputResult {
+func runThroughputSingleOperation(serverAddress string, operationID int64, semaphore chan struct{}) ThroughputResult {
 	// Acquire semaphore slot
 	semaphore <- struct{}{}
 	defer func() { <-semaphore }()
@@ -697,20 +778,17 @@ func runThroughputSingleOperation(serverAddress, authToken string, operationID i
 		Timestamp: start,
 	}
 
-	conn, err := createVDiskGrpcChannel(serverAddress)
+	conn, err := getPooledConnection(serverAddress)
 	if err != nil {
 		result.Error = err
 		result.Duration = time.Since(start)
 		return result
 	}
-	defer conn.Close()
+	// Don't close - reuse pooled connection
 
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
-	ctx := context.Background()
-	if authToken != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "Authorization", fmt.Sprintf("Bearer %s", authToken))
-	}
+	ctx := getCachedAuthContext()
 
 	switch *vdiskOperation {
 	case "read":
@@ -942,7 +1020,7 @@ func runThroughputTest() error {
 			case semaphore <- struct{}{}:
 				opID := atomic.AddInt64(&operationID, 1)
 				go func(id int64) {
-					result := runThroughputSingleOperation(*vdiskServerAddress, *vdiskAuthToken, id, semaphore)
+					result := runThroughputSingleOperation(*vdiskServerAddress, id, semaphore)
 					resultChan <- result
 				}(opID)
 			default:
@@ -985,6 +1063,10 @@ cleanup:
 
 	// Print final results
 	printFinalThroughputResults(&metrics)
+
+	// Cleanup connection pool
+	fmt.Println("Cleaning up connection pool...")
+	cleanupConnectionPool()
 
 	return nil
 }
@@ -1131,12 +1213,12 @@ func runVDiskOperation() error {
 
 	switch *vdiskOperation {
 	case "read":
-		err = vdiskStreamRead(*vdiskServerAddress, *vdiskAuthToken)
+		err = vdiskStreamRead(*vdiskServerAddress)
 	case "write":
 		if *writeData == "" {
 			return fmt.Errorf("write_data is required for write operation")
 		}
-		err = vdiskStreamWrite(*vdiskServerAddress, *vdiskAuthToken)
+		err = vdiskStreamWrite(*vdiskServerAddress)
 	default:
 		return fmt.Errorf("invalid vdisk_operation: %s (must be 'read' or 'write')", *vdiskOperation)
 	}
@@ -1147,4 +1229,15 @@ func runVDiskOperation() error {
 
 	fmt.Printf("VDisk %s operation completed in %v\n", *vdiskOperation, time.Since(start))
 	return nil
+}
+
+// cleanupConnectionPool closes all pooled connections
+func cleanupConnectionPool() {
+	connectionPool.Range(func(key, value interface{}) bool {
+		if conn, ok := value.(*grpc.ClientConn); ok {
+			conn.Close()
+		}
+		connectionPool.Delete(key)
+		return true
+	})
 }
