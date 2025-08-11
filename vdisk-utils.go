@@ -50,6 +50,9 @@ var (
 	metricsCSVPath     = flag.String("metrics_csv", "throughput_metrics.csv", "Path to write per-second throughput metrics CSV (empty to disable)")
 	metricsIntervalSec = flag.Int("metrics_interval_sec", 1, "CSV logging interval in seconds (>=1)")
 
+	// Connection pool flags
+	connectionPoolSize = flag.Int("connection_pool_size", 1, "Number of gRPC connections to maintain in the pool")
+
 	// Disk identifier flags
 	diskRecoveryPointUuid = flag.String("disk_recovery_point_uuid", "", "Disk recovery point UUID")
 	vmDiskUuid            = flag.String("vm_disk_uuid", "", "VM disk UUID")
@@ -203,10 +206,13 @@ type ThroughputResult struct {
 
 // Connection pool for throughput testing
 var (
-	connectionPool      sync.Map // map[string]*grpc.ClientConn
-	connectionPoolMutex sync.RWMutex
-	cachedAuthContext   context.Context
-	authContextOnce     sync.Once
+	connectionPool       []*grpc.ClientConn
+	connectionMutex      sync.RWMutex
+	poolInitialized      bool
+	connectionRoundRobin int64
+	connectionUsageCount []int64 // Track usage per connection for debugging
+	cachedAuthContext    context.Context
+	authContextOnce      sync.Once
 )
 
 // getCachedAuthContext returns a cached authentication context for throughput testing
@@ -217,28 +223,160 @@ func getCachedAuthContext() context.Context {
 	return cachedAuthContext
 }
 
-// getPooledConnection gets or creates a pooled connection
-func getPooledConnection(serverAddress string) (*grpc.ClientConn, error) {
-	if conn, ok := connectionPool.Load(serverAddress); ok {
-		if grpcConn, ok := conn.(*grpc.ClientConn); ok {
-			// Check if connection is still valid
-			if grpcConn.GetState().String() != "SHUTDOWN" {
-				return grpcConn, nil
+// initializeConnectionPool initializes the connection pool with specified size
+func initializeConnectionPool(serverAddress string) error {
+	connectionMutex.Lock()
+	defer connectionMutex.Unlock()
+
+	if poolInitialized {
+		return nil
+	}
+
+	poolSize := *connectionPoolSize
+	if poolSize < 1 {
+		poolSize = 1
+	}
+
+	fmt.Printf("Initializing connection pool with %d connections...\n", poolSize)
+
+	connectionPool = make([]*grpc.ClientConn, poolSize)
+	connectionUsageCount = make([]int64, poolSize)
+
+	for i := 0; i < poolSize; i++ {
+		conn, err := createVDiskGrpcChannel(serverAddress)
+		if err != nil {
+			// Clean up any connections created so far
+			for j := 0; j < i; j++ {
+				if connectionPool[j] != nil {
+					connectionPool[j].Close()
+				}
 			}
-			// Remove invalid connection
-			connectionPool.Delete(serverAddress)
+			return fmt.Errorf("failed to create connection %d: %v", i, err)
 		}
+		connectionPool[i] = conn
+		fmt.Printf("Created connection %d/%d\n", i+1, poolSize)
+	}
+
+	poolInitialized = true
+	fmt.Printf("Connection pool initialized successfully with %d connections\n", poolSize)
+	return nil
+}
+
+// getPooledConnection gets a connection from the pool using round-robin
+func getPooledConnection(serverAddress string) (*grpc.ClientConn, error) {
+	// Initialize pool if not done already
+	connectionMutex.RLock()
+	if !poolInitialized {
+		connectionMutex.RUnlock()
+		err := initializeConnectionPool(serverAddress)
+		if err != nil {
+			return nil, err
+		}
+		connectionMutex.RLock()
+	}
+
+	// Get connection using round-robin
+	if len(connectionPool) > 0 {
+		index := atomic.AddInt64(&connectionRoundRobin, 1) - 1
+		index = index % int64(len(connectionPool))
+		conn := connectionPool[index]
+
+		// Check if connection is still valid
+		if conn != nil && conn.GetState().String() != "SHUTDOWN" {
+			// Track usage for this connection
+			atomic.AddInt64(&connectionUsageCount[index], 1)
+			connectionMutex.RUnlock()
+			return conn, nil
+		}
+
+		// Connection is invalid, need to recreate it
+		connectionMutex.RUnlock()
+		return recreateConnection(serverAddress, int(index))
+	}
+
+	connectionMutex.RUnlock()
+	return nil, fmt.Errorf("connection pool is empty")
+}
+
+// recreateConnection recreates a specific connection in the pool
+func recreateConnection(serverAddress string, index int) (*grpc.ClientConn, error) {
+	connectionMutex.Lock()
+	defer connectionMutex.Unlock()
+
+	if index >= len(connectionPool) {
+		return nil, fmt.Errorf("invalid connection index %d", index)
+	}
+
+	// Close old connection if it exists
+	if connectionPool[index] != nil {
+		connectionPool[index].Close()
 	}
 
 	// Create new connection
 	conn, err := createVDiskGrpcChannel(serverAddress)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to recreate connection %d: %v", index, err)
 	}
 
-	// Store in pool
-	connectionPool.Store(serverAddress, conn)
+	connectionPool[index] = conn
+	fmt.Printf("Recreated connection %d\n", index)
+
+	// Track usage for the recreated connection
+	atomic.AddInt64(&connectionUsageCount[index], 1)
 	return conn, nil
+}
+
+// printConnectionDistribution prints connection usage distribution for debugging
+func printConnectionDistribution() {
+	connectionMutex.RLock()
+	defer connectionMutex.RUnlock()
+
+	if !poolInitialized || len(connectionUsageCount) == 0 {
+		fmt.Println("Connection pool not initialized or no usage data available")
+		return
+	}
+
+	fmt.Printf("\n=== Connection Distribution Report ===\n")
+	fmt.Printf("Pool Size: %d connections\n", len(connectionPool))
+
+	totalUsage := int64(0)
+	usages := make([]int64, len(connectionUsageCount))
+
+	// First, collect all usage counts and calculate total
+	for i, count := range connectionUsageCount {
+		usage := atomic.LoadInt64(&count)
+		usages[i] = usage
+		totalUsage += usage
+	}
+
+	// Then print with correct percentages
+	for i, usage := range usages {
+		percentage := 0.0
+		if totalUsage > 0 {
+			percentage = float64(usage) / float64(totalUsage) * 100
+		}
+		fmt.Printf("Connection %d: %d streams (%.1f%%)\n", i, usage, percentage)
+	}
+
+	if totalUsage > 0 {
+		avgUsage := float64(totalUsage) / float64(len(connectionUsageCount))
+		fmt.Printf("Total streams: %d\n", totalUsage)
+		fmt.Printf("Average per connection: %.1f\n", avgUsage)
+
+		// Calculate distribution variance
+		variance := 0.0
+		for _, usage := range usages {
+			usageFloat := float64(usage)
+			variance += (usageFloat - avgUsage) * (usageFloat - avgUsage)
+		}
+		variance /= float64(len(connectionUsageCount))
+		stdDev := variance
+		if variance > 0 {
+			stdDev = variance // Simple approximation
+		}
+		fmt.Printf("Distribution std dev: %.2f (lower is more equal)\n", stdDev)
+	}
+	fmt.Printf("=======================================\n\n")
 }
 
 func createVDiskGrpcChannel(serverAddress string) (*grpc.ClientConn, error) {
@@ -1181,6 +1319,9 @@ cleanup:
 	// Print final results
 	printFinalThroughputResults(&metrics)
 
+	// Print connection distribution report
+	printConnectionDistribution()
+
 	// Cleanup connection pool
 	fmt.Println("Cleaning up connection pool...")
 	cleanupConnectionPool()
@@ -1350,11 +1491,22 @@ func runVDiskOperation() error {
 
 // cleanupConnectionPool closes all pooled connections
 func cleanupConnectionPool() {
-	connectionPool.Range(func(key, value interface{}) bool {
-		if conn, ok := value.(*grpc.ClientConn); ok {
+	connectionMutex.Lock()
+	defer connectionMutex.Unlock()
+
+	fmt.Printf("Cleaning up connection pool (%d connections)...\n", len(connectionPool))
+
+	for i, conn := range connectionPool {
+		if conn != nil {
 			conn.Close()
+			fmt.Printf("Closed connection %d\n", i)
 		}
-		connectionPool.Delete(key)
-		return true
-	})
+	}
+
+	connectionPool = nil
+	connectionUsageCount = nil
+	poolInitialized = false
+	connectionRoundRobin = 0
+
+	fmt.Println("Connection pool cleanup completed")
 }
