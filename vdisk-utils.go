@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +45,10 @@ var (
 	testDuration   = flag.Duration("test_duration", 10*time.Minute, "Duration to run throughput test")
 	maxConcurrent  = flag.Int("max_concurrent", 10, "Maximum concurrent requests")
 	reportInterval = flag.Duration("report_interval", 30*time.Second, "Interval for intermediate throughput reports")
+
+	// Throughput CSV metrics
+	metricsCSVPath     = flag.String("metrics_csv", "throughput_metrics.csv", "Path to write per-second throughput metrics CSV (empty to disable)")
+	metricsIntervalSec = flag.Int("metrics_interval_sec", 1, "CSV logging interval in seconds (>=1)")
 
 	// Disk identifier flags
 	diskRecoveryPointUuid = flag.String("disk_recovery_point_uuid", "", "Disk recovery point UUID")
@@ -87,6 +94,101 @@ type ThroughputMetrics struct {
 	TotalLatency       time.Duration
 	RequestsPerSecond  float64
 	BytesPerSecond     float64
+}
+
+// csvLogger periodically records per-second throughput metrics to a CSV file
+type csvLogger struct {
+	file           *os.File
+	writer         *csv.Writer
+	prevTotalReqs  int64
+	prevTotalBytes int64
+	interval       time.Duration
+}
+
+func newCSVLogger(path string, intervalSeconds int) (*csvLogger, error) {
+	// Ensure directory exists
+	if dir := strings.TrimSpace(path); dir != "" {
+		if idx := strings.LastIndex(dir, "/"); idx > 0 {
+			_ = os.MkdirAll(dir[:idx], 0o755)
+		}
+	}
+
+	// Open in append mode, create if not exists
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+
+	if intervalSeconds < 1 {
+		intervalSeconds = 1
+	}
+	logger := &csvLogger{
+		file:     f,
+		writer:   csv.NewWriter(f),
+		interval: time.Duration(intervalSeconds) * time.Second,
+	}
+
+	// If file is new or empty, write header
+	fi, err := f.Stat()
+	if err == nil && fi.Size() == 0 {
+		_ = logger.writer.Write([]string{"epoch_second", "requests_per_sec", "bytes_per_sec", "mb_per_sec"})
+		logger.writer.Flush()
+	}
+
+	return logger, nil
+}
+
+func (l *csvLogger) run(ctx context.Context, metrics *ThroughputMetrics, wg *sync.WaitGroup) {
+	defer func() {
+		if wg != nil {
+			wg.Done()
+		}
+	}()
+	ticker := time.NewTicker(l.interval)
+	defer ticker.Stop()
+
+	// Initialize previous values from current totals
+	l.prevTotalReqs = atomic.LoadInt64(&metrics.TotalRequests)
+	l.prevTotalBytes = atomic.LoadInt64(&metrics.TotalBytes)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			currReqs := atomic.LoadInt64(&metrics.TotalRequests)
+			currBytes := atomic.LoadInt64(&metrics.TotalBytes)
+
+			// Compute rates over the interval
+			rps := currReqs - l.prevTotalReqs
+			bps := currBytes - l.prevTotalBytes
+			l.prevTotalReqs = currReqs
+			l.prevTotalBytes = currBytes
+
+			record := []string{
+				strconv.FormatInt(now.Unix(), 10),
+				// Normalize to per-second rates
+				fmt.Sprintf("%.6f", float64(rps)/l.interval.Seconds()),
+				fmt.Sprintf("%.6f", float64(bps)/l.interval.Seconds()),
+				fmt.Sprintf("%.6f", (float64(bps)/l.interval.Seconds())/(1024*1024)),
+			}
+			if err := l.writer.Write(record); err == nil {
+				l.writer.Flush()
+			}
+		}
+	}
+}
+
+func (l *csvLogger) Close() {
+	if l == nil {
+		return
+	}
+	if l.writer != nil {
+		l.writer.Flush()
+	}
+	if l.file != nil {
+		_ = l.file.Close()
+	}
 }
 
 // ThroughputResult represents the result of a single throughput test operation
@@ -985,6 +1087,21 @@ func runThroughputTest() error {
 	// Context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), *testDuration)
 	defer cancel()
+
+	// Optional CSV logger for per-second throughput
+	var logger *csvLogger
+	var err error
+	if metricsCSVPath != nil && strings.TrimSpace(*metricsCSVPath) != "" {
+		logger, err = newCSVLogger(*metricsCSVPath, *metricsIntervalSec)
+		if err != nil {
+			fmt.Printf("Warning: could not open metrics CSV '%s': %v\n", *metricsCSVPath, err)
+		} else {
+			// Run logger goroutine bound to the same context
+			wg.Add(1)
+			go logger.run(ctx, &metrics, &wg)
+			defer logger.Close()
+		}
+	}
 
 	// Operation counter
 	var operationID int64 = 0
