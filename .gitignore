@@ -1,41 +1,68 @@
-# Binaries
+# Nutanix Token and Authentication Files
+*.txt
+nutanix_token.txt
+
+# CSV Data Files
+*.csv
+vdisk_throughput.csv
+throughput_metrics.csv
+
+# Plot and Chart Files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+*.eps
+*.ps
+
+# Log Files
+*.log
+*.out
+*.err
+
+# Temporary Files
+*.tmp
+*.temp
+*~
+
+# Build Artifacts
+vdisk-client
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
+
+# Go-specific
 *.test
-*.out
-vdisk-client
-vdisk-scale-tester
-# Build directories
-/bin/
-/build/
-/dist/
-
-# Output of `go run`
-*.run
-
-# Dependency directories (if vendored)
-vendor/
-
-# Go workspace file (optional)
+*.prof
 go.work
-go.work.sum
 
-# IDEs and editors
+# IDE and Editor Files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS-specific files
+# OS-specific
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Backup Files
+*.bak
+*.backup
+*.old
 
-# Test cache
-*.coverprofile
-*.testresults
+# Data Files
+*.dat
+*.data
+*.db
+*.sqlite
+
+# Configuration Files with Sensitive Data
+.env
+config.ini
+secrets.yaml
+secrets.yml
