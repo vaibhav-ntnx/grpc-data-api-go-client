@@ -29,6 +29,7 @@ throughput_metrics.csv
 
 # Build Artifacts
 vdisk-client
+vdisk_client
 *.exe
 *.dll
 *.so
