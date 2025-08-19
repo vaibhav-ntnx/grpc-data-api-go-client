@@ -1007,10 +1007,9 @@ func runBatchVDiskOperations() error {
 }
 
 // runThroughputSingleOperation performs a single operation for throughput testing
-func runThroughputSingleOperation(serverAddress string, operationID int64, semaphore chan struct{}) ThroughputResult {
-	// Acquire semaphore slot
-	semaphore <- struct{}{}
-	defer func() { <-semaphore }()
+func runThroughputSingleOperation(serverAddress string, operationID int64, activeSemaphoreCount int64) ThroughputResult {
+	// Log the number of active semaphores when this operation starts
+	// fmt.Printf("Operation %d starting with %d active semaphores\n", operationID, activeSemaphoreCount)
 
 	start := time.Now()
 	result := ThroughputResult{
@@ -1259,28 +1258,27 @@ func runThroughputTest() error {
 	}()
 
 	// Main request generation loop
-	requestTicker := time.NewTicker(1 * time.Millisecond) // Start new requests frequently
-	defer requestTicker.Stop()
-
 	fmt.Println("Throughput test started...")
-
+	var activeSemaphores int64 // Thread-safe counter using atomic operations
+	
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("Test duration completed, stopping new requests...")
 			goto cleanup
-		case <-requestTicker.C:
-			// Launch new request if we have capacity
-			select {
-			case semaphore <- struct{}{}:
-				opID := atomic.AddInt64(&operationID, 1)
-				go func(id int64) {
-					result := runThroughputSingleOperation(*vdiskServerAddress, id, semaphore)
-					resultChan <- result
-				}(opID)
-			default:
-				// Semaphore full, skip this tick
-			}
+		case semaphore <- struct{}{}:
+			opID := atomic.AddInt64(&operationID, 1)
+			activeCount := atomic.AddInt64(&activeSemaphores, 1) // Increment active count
+			go func(id int64, currentActive int64) {
+				defer func() { 
+					atomic.AddInt64(&activeSemaphores, -1) // Decrement when done
+					<-semaphore // Release semaphore slot
+				}()
+				result := runThroughputSingleOperation(*vdiskServerAddress, id, currentActive)
+				resultChan <- result
+			}(opID, activeCount)
+		default:
+			// Semaphore is full, skip this tick
 		}
 	}
 
