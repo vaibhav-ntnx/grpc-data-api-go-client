@@ -45,6 +45,7 @@ var (
 	testDuration   = flag.Duration("test_duration", 10*time.Minute, "Duration to run throughput test")
 	maxConcurrent  = flag.Int("max_concurrent", 10, "Maximum concurrent requests")
 	reportInterval = flag.Duration("report_interval", 30*time.Second, "Interval for intermediate throughput reports")
+	requestTimeout = flag.Duration("request_timeout", 10*time.Second, "Timeout per throughput request (e.g., 10s, 2m)")
 
 	// Throughput CSV metrics
 	metricsCSVPath     = flag.String("metrics_csv", "throughput_metrics.csv", "Path to write per-second throughput metrics CSV (empty to disable)")
@@ -1027,7 +1028,10 @@ func runThroughputSingleOperation(serverAddress string, operationID int64, activ
 
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
-	ctx := getCachedAuthContext()
+	// Derive a per-request timeout context from the cached auth context
+	baseCtx := getCachedAuthContext()
+	ctx, cancel := context.WithTimeout(baseCtx, *requestTimeout)
+	defer cancel()
 
 	switch *vdiskOperation {
 	case "read":
@@ -1278,7 +1282,8 @@ func runThroughputTest() error {
 				resultChan <- result
 			}(opID, activeCount)
 		default:
-			// Semaphore is full, skip this tick
+			// Semaphore is full, add small delay to prevent tight loop
+			time.Sleep(1 * time.Millisecond)
 		}
 	}
 
