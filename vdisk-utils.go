@@ -29,10 +29,11 @@ var (
 	vdiskAuthToken     = flag.String("vdisk_auth_token", "", "Authentication token for VDisk service")
 	vdiskUseTLS        = flag.Bool("vdisk_use_tls", true, "Use TLS for gRPC connection (default: false)")
 	vdiskSkipTLSVerify = flag.Bool("vdisk_skip_tls_verify", true, "Skip TLS certificate verification (default: true)")
+	requestTimeout     = flag.Duration("request_timeout", 10*time.Second, "Timeout per throughput request (e.g., 10s, 2m)")
 
 	// Authentication flags
 	authType       = flag.String("auth_type", "cookie", "Authentication type (cookie, bearer, basic)")
-	cookieValue    = flag.String("cookie_value", "NTNX_IGW_SESSION=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ1c2VyX3Byb2ZpbGUiOiJ7XCJfcGVybWFuZW50XCI6IHRydWUsIFwiYXV0aGVudGljYXRlZFwiOiB0cnVlLCBcImFwcF9kYXRhXCI6IHt9LCBcInVzZXJuYW1lXCI6IFwiYWRtaW5cIiwgXCJkb21haW5cIjogbnVsbCwgXCJ1c2VydHlwZVwiOiBcImxvY2FsXCIsIFwibGVnYWN5X2FkbWluX2F1dGhvcml0aWVzXCI6IFtcIlJPTEVfQ0xVU1RFUl9BRE1JTlwiLCBcIlJPTEVfQ0xVU1RFUl9WSUVXRVJcIiwgXCJST0xFX1VTRVJfQURNSU5cIl0sIFwicm9sZXNcIjogW1wiUHJpc20gQWRtaW5cIiwgXCJQcmlzbSBWaWV3ZXJcIiwgXCJTdXBlciBBZG1pblwiXSwgXCJhdXRoX2luZm9cIjoge1widGVuYW50X3V1aWRcIjogXCIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDBcIiwgXCJzZXJ2aWNlX25hbWVcIjogbnVsbCwgXCJ1c2VyX3V1aWRcIjogXCIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDBcIiwgXCJ0b2tlbl9hdWRpZW5jZVwiOiBudWxsLCBcInRva2VuX2lzc3VlclwiOiBudWxsLCBcInVzZXJuYW1lXCI6IFwiYWRtaW5cIiwgXCJyZW1vdGVfYXV0aG9yaXphdGlvblwiOiBudWxsLCBcInJlbW90ZV9hdXRoX2pzb25cIjogbnVsbCwgXCJ3b3JrZmxvd190eXBlXCI6IG51bGwsIFwidXNlcl9ncm91cF91dWlkc1wiOiBudWxsfSwgXCJsb2dfdXVpZFwiOiBcImUxYjBhYzAyLWFiMjYtNGI4ZS1iMGU4LWQ1ZmM4YWQ0NTViNFwiLCBcIm9yaWdfdG9rZW5faXNzX3RpbWVcIjogMTc1MzY5NDM1OH0iLCJqdGkiOiI3ZTVmMmY0OC04NmI3LTM1ZDItOWI4My1jODI2Mzg4OGU1ZWUiLCJpc3MiOiJBdGhlbmEiLCJpYXQiOjE3NTM2OTQzNTgsImV4cCI6MTc1MzY5NTI1OH0.IKoCJit58Wa2VwDSGGE7WXQPtS9SoP4Kl2efen4nau-3Wkp9Tk1b_-7rirQI6X-Zm3fsXWFfXrcDHay1JlFm1rYl2OL1gf75-N3RfJOo1odetuxo4cQYpXpvKI7LyFFCoMxncRSMXfRylZ_Yb7i_rmqRo6CdxI3UJhNplw0nl6QlfPuNbb9TKgKRIsJCQcQoZAIl_C-XvLFuBC_-RaQijVEuDYta-A3u9g9kcmuFDnFmAsTN1DWNy9CXrusHBZp3VGPtdk3lmJ0g_HQiNbZO9-xAZrkcuSFqMBMhiyRsJ6w4ZgIK8appMoToQFeX1J3RnFRaErYrClxs6hmAnxUEew;NTNX_MERCURY_IGW_SESSION=CgVhZG1pbhCaiJ3EBhoHTWVyY3VyeSAA|26y8+JOdk/pM1CWEYjQvwlQTWjZ1WcSYIrjnN8+jKkY=", "Cookie value for cookie authentication")
+	cookieValue    = flag.String("cookie_value", "NTNX_IGW_SESSION=ABC", "Cookie value for cookie authentication")
 	basicAuthValue = flag.String("basic_auth_value", "YWRtaW46TnV0YW5peC4xMjM=", "Base64 encoded credentials for basic auth")
 
 	// Batch operation flags
@@ -45,7 +46,6 @@ var (
 	testDuration   = flag.Duration("test_duration", 10*time.Minute, "Duration to run throughput test")
 	maxConcurrent  = flag.Int("max_concurrent", 10, "Maximum concurrent requests")
 	reportInterval = flag.Duration("report_interval", 30*time.Second, "Interval for intermediate throughput reports")
-	requestTimeout = flag.Duration("request_timeout", 10*time.Second, "Timeout per throughput request (e.g., 10s, 2m)")
 
 	// Throughput CSV metrics
 	metricsCSVPath     = flag.String("metrics_csv", "throughput_metrics.csv", "Path to write per-second throughput metrics CSV (empty to disable)")
@@ -62,7 +62,9 @@ var (
 	// Read operation flags
 	readOffset      = flag.Int64("read_offset", 0, "Read offset in bytes")
 	readLength      = flag.Int64("read_length", 0, "Read length in bytes (0 for entire disk)")
-	maxResponseSize = flag.Int64("max_response_size", 1024*1024, "Maximum response size in bytes")
+	maxResponseSize = flag.Int64("max_response_size", 1024*1024*90, "Maximum response size in bytes")
+	readTimeout     = flag.Duration("read_timeout", 10*time.Minute, "Timeout for read operation (e.g., 10m, 30m, 1h)")
+	writeTimeout    = flag.Duration("write_timeout", 10*time.Minute, "Timeout for write operation (e.g., 10m, 30m, 1h)")
 
 	// Write operation flags
 	writeOffset     = flag.Int64("write_offset", 0, "Write offset in bytes")
@@ -396,10 +398,11 @@ func createVDiskGrpcChannel(serverAddress string) (*grpc.ClientConn, error) {
 		fmt.Println("Connecting without TLS...")
 	}
 
-	// Add call options
+	// Add call options - increased message size to handle larger responses
+	// Default is 4MB, we set to 200MB to handle large disk reads
 	opts = append(opts, grpc.WithDefaultCallOptions(
-		grpc.MaxCallRecvMsgSize(100*1024*1024),
-		grpc.MaxCallSendMsgSize(100*1024*1024),
+		grpc.MaxCallRecvMsgSize(200*1024*1024),
+		grpc.MaxCallSendMsgSize(200*1024*1024),
 	))
 
 	// Add keepalive settings for better connection management
@@ -510,7 +513,10 @@ func vdiskStreamRead(serverAddress string) error {
 
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
-	ctx := context.Background()
+	// Create context with configurable timeout for read operations
+	ctx, cancel := context.WithTimeout(context.Background(), *readTimeout)
+	defer cancel()
+
 	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamRead(ctx)
@@ -569,8 +575,21 @@ func vdiskStreamRead(serverAddress string) error {
 
 		// Display range information
 		for i, dataRange := range response.RangeVec {
+			var offset, length int64
+			var zeroData bool
+
+			if dataRange.Offset != nil {
+				offset = *dataRange.Offset
+			}
+			if dataRange.Length != nil {
+				length = *dataRange.Length
+			}
+			if dataRange.ZeroData != nil {
+				zeroData = *dataRange.ZeroData
+			}
+
 			fmt.Printf("  Range %d: offset=%d, length=%d, zero_data=%t\n",
-				i+1, *dataRange.Offset, *dataRange.Length, *dataRange.ZeroData)
+				i+1, offset, length, zeroData)
 		}
 
 		// Display total disk size if available
@@ -731,7 +750,10 @@ func vdiskStreamReadSingle(serverAddress string, operationID int) BatchOperation
 
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
-	ctx := context.Background()
+	// Create context with configurable timeout for read operations
+	ctx, cancel := context.WithTimeout(context.Background(), *readTimeout)
+	defer cancel()
+
 	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamRead(ctx)
@@ -828,7 +850,11 @@ func vdiskStreamWriteSingle(serverAddress string, operationID int) BatchOperatio
 
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
-	ctx := context.Background()
+	// Create context with configurable timeout for write operations
+	ctx, cancel := context.WithTimeout(context.Background(), *writeTimeout)
+	defer cancel()
+
+	ctx = createAuthContext(context.Background())
 	ctx = createAuthContext(ctx)
 
 	stream, err := client.VDiskStreamWrite(ctx)
@@ -1029,8 +1055,18 @@ func runThroughputSingleOperation(serverAddress string, operationID int64, activ
 	client := protos.NewStargateVDiskRpcSvcClient(conn)
 
 	// Derive a per-request timeout context from the cached auth context
+	// Use readTimeout for read operations and writeTimeout for write operations
 	baseCtx := getCachedAuthContext()
-	ctx, cancel := context.WithTimeout(baseCtx, *requestTimeout)
+	var timeout time.Duration
+	switch *vdiskOperation {
+	case "read":
+		timeout = *readTimeout
+	case "write":
+		timeout = *writeTimeout
+	default:
+		timeout = *requestTimeout // fallback to requestTimeout for unknown operations
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	defer cancel()
 
 	switch *vdiskOperation {
@@ -1264,7 +1300,7 @@ func runThroughputTest() error {
 	// Main request generation loop
 	fmt.Println("Throughput test started...")
 	var activeSemaphores int64 // Thread-safe counter using atomic operations
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1274,15 +1310,15 @@ func runThroughputTest() error {
 			opID := atomic.AddInt64(&operationID, 1)
 			activeCount := atomic.AddInt64(&activeSemaphores, 1) // Increment active count
 			go func(id int64, currentActive int64) {
-				defer func() { 
+				defer func() {
 					atomic.AddInt64(&activeSemaphores, -1) // Decrement when done
-					<-semaphore // Release semaphore slot
+					<-semaphore                            // Release semaphore slot
 				}()
 				result := runThroughputSingleOperation(*vdiskServerAddress, id, currentActive)
 				resultChan <- result
 			}(opID, activeCount)
 		default:
-			// Semaphore is full, add small delay to prevent tight loop
+			// Semaphore is full, skip this tick
 			time.Sleep(1 * time.Millisecond)
 		}
 	}

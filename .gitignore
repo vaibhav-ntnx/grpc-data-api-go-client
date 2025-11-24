@@ -67,3 +67,4 @@ Thumbs.db
 config.ini
 secrets.yaml
 secrets.yml
+flamegraph
